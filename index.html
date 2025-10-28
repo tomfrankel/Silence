@@ -1,4 +1,4 @@
-    <!DOCTYPE html>
+  <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -503,6 +503,38 @@
         const FILTER_COEFFICIENT = 2.8;       // From formula
         const H2O_TO_PSI = 27.72;            // Conversion factor
         
+        // Check Valve lookup table (valve size -> [diameter, coefficient])
+        const checkValveLookup = {
+            1: [0.86, 0.35],
+            1.5: [1.35, 0.35],
+            2: [1.82, 0.35],
+            2.5: [2.26, 0.28],
+            3: [2.71, 0.28],
+            4: [3.68, 0.17],
+            5: [4.65, 0.17],
+            6: [5.5, 0.11],
+            8: [7.48, 0.11],
+            10: [9.33, 0.11],
+            12: [11.02, 0.11],
+            14: [12.85, 0.1],
+            16: [14.69, 0.1]
+        };
+        
+        // BF Valve lookup table (valve size -> [diameter, coefficient])
+        const bfValveLookup = {
+            1: [0.86, 0.35],
+            1.5: [1.35, 0.35],
+            2: [1.82, 0.35],
+            2.5: [2.26, 0.12],
+            3: [2.71, 0.12],
+            4: [3.68, 0.17],
+            5: [4.65, 0.17],
+            6: [5.5, 0.11],
+            8: [7.48, 0.11],
+            10: [9.33, 0.11],
+            12: [11.02, 0.11]
+        };
+        
         // ============================================
         // MAIN CALCULATION FUNCTION
         // ============================================
@@ -518,16 +550,19 @@
             
             // Validate inputs
             if (!filterSize || !inletSilencerSize || !dischargeSilencerSize || !flowICFM) {
-                alert('Please fill in all required fields');
+                document.getElementById('flowError').textContent = 'Please fill in all required fields';
+                document.getElementById('flowError').style.display = 'block';
                 return;
             }
             
             if (flowICFM <= 0) {
                 document.getElementById('flowError').textContent = 'Flow rate must be greater than 0';
+                document.getElementById('flowError').style.display = 'block';
                 return;
             }
             
             document.getElementById('flowError').textContent = '';
+            document.getElementById('flowError').style.display = 'none';
             
             // ============================================
             // FORMULA 1: FILTER PRESSURE DROP
@@ -566,25 +601,55 @@
             
             // ============================================
             // FORMULA 4: CHECK VALVE PRESSURE DROP
-            // Simplified estimation based on flow and valve size
+            // Excel CheckValve sheet:
+            // SCFM = ICFM/((14.696/(14.696+DischargePressure))*((460+DischargeTemp)/520))
+            // PD = (SCFM^2 * coefficient * (DischargeTemp+460)) / (459684 * diameter^4 * (14.696+DischargePressure))
+            // PD = max(0.01, PD)
             // ============================================
             
             // Convert ICFM to SCFM for check valve calculation
             const scfm = flowICFM / ((14.696 / (14.696 + dischargePressure)) * 
                                      ((460 + dischargeTemp) / 520));
             
-            // Simplified check valve formula (actual formula in Excel is complex)
-            // Using a simplified version based on flow and size
-            const checkValvePD_PSI = Math.max(0.01, 
-                Math.pow(scfm / 1000, 2) * (4 / dischargeSilencerSize) * 0.025);
+            // Get valve parameters from lookup table (use discharge silencer size as valve size)
+            const checkValveParams = checkValveLookup[dischargeSilencerSize] || checkValveLookup[6];
+            const checkValveDiameter = checkValveParams[0];
+            const checkValveCoefficient = checkValveParams[1];
+            
+            // Calculate check valve pressure drop using Excel formula
+            const checkValvePD_PSI = Math.max(0.01,
+                (Math.pow(scfm, 2) * checkValveCoefficient * (dischargeTemp + 460)) /
+                (459684 * Math.pow(checkValveDiameter, 4) * (14.696 + dischargePressure))
+            );
             const checkValvePD_H2O = checkValvePD_PSI * H2O_TO_PSI;
             
             // ============================================
             // FORMULA 5: BF VALVE PRESSURE DROP
-            // Using typical value from Excel (0.24 PSI for reference conditions)
+            // Excel BFValve sheet:
+            // SCFM_BF = ICFM*((14.696/(14.696+DischargePressure))*((460+DischargeTemp)/568))
+            // velocity = SCFM_BF / ((valveSize/2)^2 * PI / 144)
+            // PD = ((constant1^velocity) * constant2) * (0.754/62.34)
             // ============================================
             
-            const bfValvePD_PSI = 0.24 * (flowICFM / 518) * (4 / dischargeSilencerSize);
+            // Convert ICFM to SCFM for BF valve (different conversion than check valve)
+            const scfm_bf = flowICFM * ((14.696 / (14.696 + dischargePressure)) * 
+                                        ((460 + dischargeTemp) / 568));
+            
+            // Get valve parameters from lookup table
+            const bfValveParams = bfValveLookup[dischargeSilencerSize] || bfValveLookup[6];
+            const bfValveDiameter = bfValveParams[0];
+            const bfValveCoefficient = bfValveParams[1];
+            
+            // Calculate velocity through valve
+            const valveArea = Math.PI * Math.pow(dischargeSilencerSize / 2, 2) / 144;
+            const valveVelocity = scfm_bf / valveArea;
+            
+            // BF Valve calculation (simplified from Excel's complex formula)
+            // Using the pattern from Excel: constant1^velocity * constant2 * conversion
+            const constant1 = 1.000592385;  // From Excel C80
+            const constant2 = 1.1649177997; // From Excel D80
+            const bfValvePD_water = Math.pow(constant1, valveVelocity) * constant2;
+            const bfValvePD_PSI = bfValvePD_water * (0.754 / 62.34);
             const bfValvePD_H2O = bfValvePD_PSI * H2O_TO_PSI;
             
             // ============================================
